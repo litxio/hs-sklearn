@@ -62,6 +62,8 @@ dependencies:
 - yaml
 - time
 - repa
+- vector
+- inline-c
 
 
 data-files: pybits/**/*.py

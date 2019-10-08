@@ -1,4 +1,7 @@
 {-# LANGUAGE ForeignFunctionInterface, ExtendedDefaultRules, GADTs #-}
+{-# LANGUAGE CPP #-}
+{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module SKLearn.PyInterOp where
 
@@ -13,6 +16,7 @@ import qualified Data.HashMap.Strict as HM
 import System.Environment
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
+import qualified Data.Vector.Storable as V
 import System.FilePath
 import Data.String
 import Data.Aeson
@@ -22,6 +26,9 @@ import Data.Foldable
 import Control.Monad.Trans.Resource
 import Control.Monad.IO.Class
 import Paths_sklearn
+import qualified Language.C.Inline as C
+
+C.include "/usr/lib/python3.7/site-packages/numpy/core/include/numpy/arrayobject.h"
 
 data PyObject = PyObject
 type PyObjectPtr = Ptr PyObject
@@ -128,6 +135,8 @@ runInterpreter mvarIn mvarOut = do
   printDebugInfo env
   runResourceT $ do
     interopObj <- initialize
+    liftIO $ initNumpy
+    liftIO $ makeArray
     debug env "Initialized"
     let loop = do
           req <- liftIO $ takeMVar mvarIn
@@ -207,4 +216,8 @@ foreign import ccall "PyObject_GetAttrString"
 foreign import ccall "PyLong_FromLong" 
   pyLongFromLong :: CLong -> IO PyObjectPtr
 
+initNumpy :: IO ()
+initNumpy = [C.block| void { import_array() } |]
 
+makeArray :: IO (Ptr ())
+makeArray = [C.exp| void* {PyArray_SimpleNew(1,0, 0)} |]
