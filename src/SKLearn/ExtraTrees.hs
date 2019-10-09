@@ -3,10 +3,13 @@
 module SKLearn.ExtraTrees where
 
 import GHC.Generics
+import qualified Data.HashMap.Strict as HM
 import Data.Aeson
 import SKLearn.Classes
+import SKLearn.PyInterOp
 
-data ExtraTreesRegressor = ExtraTreesRegressor deriving (Show, Generic, ToJSON)
+data ExtraTreesRegressor = ExtraTreesRegressor {_pyObj :: PyObjectPtr}
+  deriving (Show, Generic)
 
 data SplitCriterion = MSE | MAE deriving (Eq, Show, Enum, Generic, ToJSON)
 
@@ -40,12 +43,42 @@ data ExtraTreesRegressorParams =
                , warmStart :: Maybe Bool }
                deriving (Eq, Show, Generic, ToJSON)
 
+defaultExtraTreesRegressorParams = ExtraTreesRP
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+                                      Nothing
+
 instance BaseEstimator ExtraTreesRegressor where
   type Params ExtraTreesRegressor = ExtraTreesRegressorParams
-  new params = pyNew "sklearn.ensemble" "ExtraTreesRegressor" (toJSON params)
+  new params = ExtraTreesRegressor <$>
+                pyNew "sklearn.ensemble" "ExtraTreesRegressor" (toJSON params)
 
-pyNew = undefined
 
 instance Regressor ExtraTreesRegressor where
+
+instance Supervised ExtraTreesRegressor where
+  fitS (ExtraTreesRegressor ptr) x y = do
+    pyGILStateEnsure
+    xP <- repaToNumpy x
+    yP <- repaToNumpy y
+    let args = [SomePyArgument xP, SomePyArgument yP]
+    callMethod ptr $ PyCallRequest "fit" args HM.empty
+    pyGILStateEnsure
+    return $ ExtraTreesRegressor ptr
+
+    
 
 

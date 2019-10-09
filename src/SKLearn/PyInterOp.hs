@@ -10,20 +10,23 @@ import Foreign.C.Types
 import Foreign.C.String
 import Foreign.Ptr
 import Foreign.Storable
+import Data.Array.Repa hiding ((++))
+import Data.Array.Repa.Repr.ForeignPtr (F, toForeignPtr)
 import qualified Data.ByteString.Char8 as BSC
 import qualified Debug.Trace as Debug
 import qualified Data.HashMap.Strict as HM
 import System.Environment
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
+import Control.Monad.Catch
 import qualified Data.Vector.Storable as V
 import System.FilePath
 import Data.String
-import Data.Aeson
+import Data.Aeson hiding (Array)
 import Foreign.Marshal.Array
 import Control.Monad
 import Data.Foldable
-import Control.Monad.Trans.Resource
+-- import Control.Monad.Trans.Resource
 import Control.Monad.IO.Class
 import Paths_sklearn
 import qualified Language.C.Inline as C
@@ -33,8 +36,11 @@ C.include "/usr/lib/python3.7/site-packages/numpy/core/include/numpy/arrayobject
 data PyObject = PyObject
 type PyObjectPtr = Ptr PyObject
 
+allocate a _ = (0,) <$> a
+
 type Env = ()
 env = ()
+type ResIO = IO
 
 class ToPyArgument a where
   toPyArgument :: a -> ResIO PyObjectPtr
@@ -133,10 +139,11 @@ runInterpreter mvarIn mvarOut = do
                      Just s -> s ++ (searchPathSeparator:ourpp)
   debug env $ "Setting PYTHONPATH to \""++pythonPath++"\""
   printDebugInfo env
-  runResourceT $ do
+  -- runResourceT $ do
+  do
     interopObj <- initialize
     liftIO $ initNumpy
-    liftIO $ makeArray
+    -- newNumpyDoubleArray [3,3]
     debug env "Initialized"
     let loop = do
           req <- liftIO $ takeMVar mvarIn
@@ -159,6 +166,33 @@ excIfMinus1 i
   | i == (-1) = liftIO $ pyErrPrintEx 0 >> return i
   | otherwise = return i
 
+npDoubleType = [C.pure| int{NPY_DOUBLE} |]
+
+newNumpyDoubleArray :: [Int] -> ResIO PyObjectPtr
+newNumpyDoubleArray dims = do
+  dimsP <- snd <$> allocate (newArray $ fromIntegral <$> dims) free :: ResIO (Ptr CLong)
+  liftIO $ castPtr <$> npArraySimpleNew 
+                          (fromIntegral $ length dims) dimsP npDoubleType
+
+
+pyNew :: String -> String -> Value -> IO PyObjectPtr
+pyNew moduleName className params = do
+  mod <- importModule moduleName
+  pClass <- getAttr mod className
+  -- TODO handle args
+  pArgs <- createArgsTuple []
+  mPtr $ pyObjectCallObject pClass pArgs >>= excIfNull
+
+
+repaToNumpy :: Shape sh => Array F sh Double -> IO PyObjectPtr
+repaToNumpy arr = do
+  let dims = listOfShape (extent arr)
+  dimsP <- snd <$> allocate (newArray $ fromIntegral <$> dims) free :: IO (Ptr CLong)
+  debug env "About to create array... hold on!!"
+  withForeignPtr (toForeignPtr arr) $ \p ->
+    npArraySimpleNewFromData (fromIntegral $ length dims) dimsP npDoubleType (castPtr p)
+        >>= excIfNull
+
 
 printDebugInfo :: Env -> IO ()
 printDebugInfo env = do
@@ -169,6 +203,10 @@ printDebugInfo env = do
   debug env $ "Python module path: " ++ pyPath
 
 debug env = liftIO . Debug.traceIO
+
+
+
+
 
 foreign import ccall "Py_Main" pyMain :: CInt -> Ptr (Ptr CInt) -> IO CInt
 foreign import ccall "PyRun_SimpleString" pyRunSimpleString :: CString -> IO CInt
@@ -212,12 +250,20 @@ foreign import ccall "PyObject_CallObject"
 foreign import ccall "PyObject_GetAttrString" 
   pyObjectGetAttrString :: PyObjectPtr -> CString -> IO PyObjectPtr
 
-
 foreign import ccall "PyLong_FromLong" 
   pyLongFromLong :: CLong -> IO PyObjectPtr
 
 initNumpy :: IO ()
-initNumpy = [C.block| void { import_array() } |]
+initNumpy = [C.block| void { import_array(); return; } |]
 
-makeArray :: IO (Ptr ())
-makeArray = [C.exp| void* {PyArray_SimpleNew(1,0, 0)} |]
+npArraySimpleNew :: CInt -> Ptr CLong -> CInt -> IO PyObjectPtr
+npArraySimpleNew nd dims typenum 
+  = castPtr <$> [C.exp| void* {PyArray_SimpleNew($(int nd), $(long* dims), $(int typenum))} |]
+
+
+npArraySimpleNewFromData :: CInt -> Ptr CLong -> CInt -> Ptr () -> IO PyObjectPtr
+npArraySimpleNewFromData nd dims typenum dataPtr
+  = castPtr <$> [C.exp| void* {PyArray_SimpleNewFromData($(int nd),
+                                             $(long* dims),
+                                             $(int typenum),
+                                             $(void* dataPtr))} |]

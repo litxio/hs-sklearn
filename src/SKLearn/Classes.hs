@@ -1,11 +1,13 @@
 
 module SKLearn.Classes where
 
+import GHC.TypeLits
 import Data.Array.Repa
+import Data.Array.Repa.Repr.ForeignPtr
 
 
-type Matrix r n m a = Array r (Z :. n :. m) a
-type Vector r n a = Array r (Z :. n) a
+type Matrix a = Array F DIM2 a
+type Vector a = Array F DIM1 a
 
 
 class BaseEstimator a where
@@ -16,17 +18,17 @@ class BaseEstimator a where
 
 
 class BaseEstimator a => Regressor a where
-  score :: a -> Matrix r n m Double -> Vector r m Double -> IO Double
-  predict :: a -> Matrix r n m Double -> IO (Vector r m Double)
+  score :: a -> Matrix Double -> Vector Double -> IO Double
+  predict :: a -> Matrix Double -> IO (Vector Double)
 
 
 -- | This class doesn't actually exist in the Python sklearn hierarchy, but
 -- many classes follow the pattern
 class BaseEstimator a => Supervised a where
-  fitS :: a -> Matrix r n m Double -> Vector r m Double -> IO a
+  fitS :: a -> Matrix Double -> Vector Double -> IO a
 
 
 class BaseEstimator a => Unsupervised a where
-  fitU :: a -> Matrix r n m Double -> IO a
+  fitU :: a -> Matrix Double -> IO a
 
 

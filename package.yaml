@@ -64,7 +64,7 @@ dependencies:
 - repa
 - vector
 - inline-c
-
+- exceptions
 
 data-files: pybits/**/*.py
 
