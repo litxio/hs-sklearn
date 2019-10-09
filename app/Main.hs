@@ -17,10 +17,7 @@ import SKLearn.ExtraTrees
 
 main :: IO ()
 main = do
-  mvarIn <- newEmptyMVar :: IO (MVar PyCallRequest)
-  mvarOut <- newEmptyMVar :: IO (MVar Value)
-  -- putMVar mvarIn $ PyCallRequest "test" [] HM.empty
-  runInterpreter mvarIn mvarOut  
+  runInterpreter
   -- res <- takeMVar mvarOut
   -- print res
 

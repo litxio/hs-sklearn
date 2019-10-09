@@ -42,6 +42,9 @@ type Env = ()
 env = ()
 type ResIO = IO
 
+data PyInterpreter = PyInterpreter {stopInterpreter :: IO ()
+                                   ,interpreterThread :: Async ()}
+
 class ToPyArgument a where
   toPyArgument :: a -> ResIO PyObjectPtr
 
@@ -80,22 +83,22 @@ readStr = liftIO . (pyUnicodeAsUTF8 >=> peekCString)
 
 importModule :: String -> ResIO PyObjectPtr
 importModule s = liftIO $ withCString s $ \cs ->
-  pyImportImportModule cs
+  pyImportImportModule cs >>= excIfNull
 
 
 getAttr :: PyObjectPtr -> String -> ResIO PyObjectPtr
 getAttr pobj attr = liftIO $ withCString attr $ \cattr ->
-  pyObjectGetAttrString pobj cattr >>= excIfNull
+  debug env ("getting attr "++attr) >> pyObjectGetAttrString pobj cattr >>= excIfNull
 
 
 -- Return a python object representing an instance of our main interop class
-initialize :: ResIO PyObjectPtr
+initialize :: ResIO ()
 initialize = do
   liftIO $ pyInitialize
-  debug env "Importing interop"
-  pModule <- importModule "interop" >>= excIfNull
-  pClass <- getAttr pModule "Interop" >>= excIfNull
-  mPtr $ pyObjectCallObject pClass nullPtr >>= excIfNull
+  -- debug env "Importing interop"
+  -- pModule <- importModule "interop" >>= excIfNull
+  -- pClass <- getAttr pModule "Interop" >>= excIfNull
+  -- mPtr $ pyObjectCallObject pClass nullPtr >>= excIfNull
   --when (res == -1) $
   --  logerr env $ "Python exited with an exception"
   -- pyFinalize
@@ -126,14 +129,30 @@ oldCallMethod obj PyCallRequest{methodName, args, kwargs} = do
   return res
 
 
+callMethodJSON :: FromJSON a
+               => PyObjectPtr 
+               -> String 
+               -> [SomePyArgument] 
+               -> ResIO (Maybe a)
+callMethodJSON obj methodName args = do
+  res <- simpleCallMethod obj methodName args
+  jsonRes <- jsonify res
+  case eitherDecodeStrict' (BSC.pack jsonRes) of
+    Right json -> return json
+    Left e -> throwM $ userError e
+
 simpleCallMethod :: PyObjectPtr 
                  -> String 
                  -> [SomePyArgument] 
                  -> ResIO PyObjectPtr
 simpleCallMethod obj methodName args = do
+  debug env $ "Creating arguments for "++methodName
   pArgs <- createArgsTuple args
+  debug env $ "Getting method object "++methodName
   method <- getAttr obj methodName
+  debug env $ "Calling "++methodName
   res <- mPtr $ pyObjectCallObject method pArgs >>= excIfNull
+  debug env $ "Call returned "++methodName
   liftIO $ pyDecRef pArgs
   return res
 
@@ -148,8 +167,8 @@ jsonify obj = do
 
 
 -- | Starts the Python interpreter and hands over control
-runInterpreter :: MVar PyCallRequest -> MVar Value -> IO (Async ())
-runInterpreter mvarIn mvarOut = do
+runInterpreter :: IO PyInterpreter
+runInterpreter = do
   ourpp <- getDataFileName "pybits"
   pythonPath0 <- lookupEnv "PYTHONPATH"
   let pythonPath = case pythonPath0 of
@@ -157,26 +176,19 @@ runInterpreter mvarIn mvarOut = do
                      Just s -> s ++ (searchPathSeparator:ourpp)
   debug env $ "Setting PYTHONPATH to \""++pythonPath++"\""
   printDebugInfo env
+  stopMVar <- newEmptyMVar
   -- runResourceT $ do
-  do
-    interopObj <- initialize
-    liftIO $ initNumpy
-    -- newNumpyDoubleArray [3,3]
-    debug env "Initialized"
-    let loop = do
-          req <- liftIO $ takeMVar mvarIn
-          debug env "Got request"
-          res <- oldCallMethod interopObj req
-          jsonRes <- jsonify res
-          case eitherDecodeStrict' (BSC.pack jsonRes) of
-            Right json -> liftIO $ putMVar mvarOut json
-            Left e -> throwM $ userError e
-          loop
-    async loop
+  initialize
+  debug env "Initializing numpy"
+  liftIO $ initNumpy
+  -- newNumpyDoubleArray [3,3]
+  debug env "Initialized"
+  thread <- async $ takeMVar stopMVar
+  return $ PyInterpreter (putMVar stopMVar ()) thread
 
 excIfNull :: MonadIO m => PyObjectPtr -> m PyObjectPtr
 excIfNull p
-  | p == nullPtr = liftIO $ pyErrPrintEx 0 >> return p
+  | p == nullPtr = liftIO $ debug env "Null ptr!!" >> pyErrPrintEx 0 >> return p
   | otherwise = return p
 
 excIfMinus1 :: (MonadIO m, Num i, Eq i) => i -> m i
@@ -194,10 +206,14 @@ newNumpyDoubleArray dims = do
 
 pyNew :: String -> String -> Value -> IO PyObjectPtr
 pyNew moduleName className params = do
+  debug env $ "pyNew getting module "++ moduleName
   mod <- importModule moduleName
+  debug env $ "pyNew getting class "++ className
   pClass <- getAttr mod className
   -- TODO handle args
+  debug env $ "pyNew creating args tuple class "++ className
   pArgs <- createArgsTuple []
+  debug env $ "pyNew calling "++ className
   mPtr $ pyObjectCallObject pClass pArgs >>= excIfNull
 
 
@@ -213,7 +229,7 @@ repaToNumpy arr = do
 
 numpyToRepa :: Shape sh => PyObjectPtr -> sh -> IO (Array F sh Double)
 numpyToRepa npArr shape = do
-  dataPtr <- castPtr <$> npArrayData npArr
+  dataPtr <- castPtr <$> (npArrayData npArr >>= excIfNull)
   -- let cleanup = castFunPtr $ [C.funPtr| void deref(double* ptr) {
   --                                         Py_DecRef( $(void* npArr)); 
   --                                       } |]
