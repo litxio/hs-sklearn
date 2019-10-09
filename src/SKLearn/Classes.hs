@@ -1,8 +1,10 @@
 
 module SKLearn.Classes where
 
+import Data.Coerce
 import GHC.TypeLits
 import Data.Array.Repa
+import SKLearn.PyInterOp
 import Data.Array.Repa.Repr.ForeignPtr
 
 
@@ -11,7 +13,7 @@ type Vector a = Array F DIM1 a
 
 
 class BaseEstimator a where
-  type Params a :: *
+  data Params a :: *
   new :: Params a -> IO a
   -- getParams :: a -> IO (Params a)
   -- setParams :: a -> Params a -> IO ()
@@ -20,15 +22,29 @@ class BaseEstimator a where
 class BaseEstimator a => Regressor a where
   score :: a -> Matrix Double -> Vector Double -> IO Double
   predict :: a -> Matrix Double -> IO (Vector Double)
+  default predict :: Coercible a PyObjectPtr 
+                  => a -> Matrix Double -> IO (Vector Double)
+  predict regressor mat = withGIL $ do
+    resArr <- simpleCallMethod (coerce regressor) "predict" [SomePyArgument mat]
+    numpyToRepa resArr (ix1 (head (listOfShape (extent mat))))
 
 
 -- | This class doesn't actually exist in the Python sklearn hierarchy, but
 -- many classes follow the pattern
 class BaseEstimator a => Supervised a where
   fitS :: a -> Matrix Double -> Vector Double -> IO a
+  default fitS :: Coercible a PyObjectPtr 
+               => a -> Matrix Double -> Vector Double -> IO a
+  fitS estm x y = withGIL $ do
+    simpleCallMethod (coerce estm) "fit" [SomePyArgument x, SomePyArgument y]
+    return estm
 
 
 class BaseEstimator a => Unsupervised a where
   fitU :: a -> Matrix Double -> IO a
+  default fitU :: Coercible a PyObjectPtr => a -> Matrix Double -> IO a
+  fitU estm x = withGIL $ do
+    simpleCallMethod (coerce estm) "fit" [SomePyArgument x]
+    return estm
 
 
