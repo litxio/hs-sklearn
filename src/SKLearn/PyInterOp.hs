@@ -6,12 +6,13 @@
 module SKLearn.PyInterOp where
 
 import Foreign
+import qualified Foreign.Concurrent as FC
 import Foreign.C.Types
 import Foreign.C.String
 import Foreign.Ptr
 import Foreign.Storable
 import Data.Array.Repa hiding ((++))
-import Data.Array.Repa.Repr.ForeignPtr (F, toForeignPtr)
+import Data.Array.Repa.Repr.ForeignPtr (F, toForeignPtr, fromForeignPtr)
 import qualified Data.ByteString.Char8 as BSC
 import qualified Debug.Trace as Debug
 import qualified Data.HashMap.Strict as HM
@@ -130,7 +131,7 @@ jsonify obj = do
 
 
 -- | Starts the Python interpreter and hands over control
-runInterpreter :: MVar PyCallRequest -> MVar Value -> IO ()
+runInterpreter :: MVar PyCallRequest -> MVar Value -> IO (Async ())
 runInterpreter mvarIn mvarOut = do
   ourpp <- getDataFileName "pybits"
   pythonPath0 <- lookupEnv "PYTHONPATH"
@@ -154,7 +155,7 @@ runInterpreter mvarIn mvarOut = do
             Right json -> liftIO $ putMVar mvarOut json
             Left e -> throwM $ userError e
           loop
-    loop
+    async loop
 
 excIfNull :: MonadIO m => PyObjectPtr -> m PyObjectPtr
 excIfNull p
@@ -194,6 +195,16 @@ repaToNumpy arr = do
         >>= excIfNull
 
 
+numpyToRepa :: Shape sh => PyObjectPtr -> sh -> IO (Array F sh Double)
+numpyToRepa npArr shape = do
+  dataPtr <- castPtr <$> npArrayData npArr
+  -- let cleanup = castFunPtr $ [C.funPtr| void deref(double* ptr) {
+  --                                         Py_DecRef( $(void* npArr)); 
+  --                                       } |]
+  fPtr <- FC.newForeignPtr dataPtr (pyDecRef npArr>>return ())
+  return $ fromForeignPtr shape fPtr
+
+
 printDebugInfo :: Env -> IO ()
 printDebugInfo env = do
   debug env $ "Python thread starting"
@@ -203,10 +214,6 @@ printDebugInfo env = do
   debug env $ "Python module path: " ++ pyPath
 
 debug env = liftIO . Debug.traceIO
-
-
-
-
 
 foreign import ccall "Py_Main" pyMain :: CInt -> Ptr (Ptr CInt) -> IO CInt
 foreign import ccall "PyRun_SimpleString" pyRunSimpleString :: CString -> IO CInt
@@ -223,6 +230,8 @@ foreign import ccall "&PyExc_EOFError" pyEOFError :: Ptr PyObjectPtr
 foreign import ccall "Py_GetVersion" pyGetVersion :: IO CString
 foreign import ccall "Py_GetPath" pyGetPath :: IO CWString
 foreign import ccall "Py_DecRef" pyDecRef :: PyObjectPtr -> IO ()
+foreign import ccall "Py_IncRef" pyIncRef :: PyObjectPtr -> IO ()
+foreign import ccall "&Py_DecRef" pyDecRef_Ptr :: FunPtr (Ptr a -> IO ())
 
 foreign import ccall "wrapper" createPendingCallPtr :: IO CInt -> IO (FunPtr (IO CInt))
 
@@ -260,6 +269,11 @@ npArraySimpleNew :: CInt -> Ptr CLong -> CInt -> IO PyObjectPtr
 npArraySimpleNew nd dims typenum 
   = castPtr <$> [C.exp| void* {PyArray_SimpleNew($(int nd), $(long* dims), $(int typenum))} |]
 
+npArrayData :: PyObjectPtr -> IO (Ptr a)
+npArrayData arr = do
+  let arr' = castPtr arr
+  pyIncRef arr 
+  castPtr <$> [C.exp| void* {PyArray_DATA($(void* arr'))} |]
 
 npArraySimpleNewFromData :: CInt -> Ptr CLong -> CInt -> Ptr () -> IO PyObjectPtr
 npArraySimpleNewFromData nd dims typenum dataPtr

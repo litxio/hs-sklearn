@@ -4,6 +4,7 @@ module SKLearn.ExtraTrees where
 
 import GHC.Generics
 import qualified Data.HashMap.Strict as HM
+import Data.Array.Repa
 import Data.Aeson
 import SKLearn.Classes
 import SKLearn.PyInterOp
@@ -68,15 +69,22 @@ instance BaseEstimator ExtraTreesRegressor where
 
 
 instance Regressor ExtraTreesRegressor where
+  predict (ExtraTreesRegressor etPtr) mat = do
+    state <- pyGILStateEnsure
+    npArr <- repaToNumpy mat
+    resArr <- callMethod etPtr $
+      PyCallRequest "predict" [SomePyArgument npArr] HM.empty
+    pyGILStateRelease state
+    numpyToRepa resArr (ix1 (head (listOfShape (extent mat))))
 
 instance Supervised ExtraTreesRegressor where
   fitS (ExtraTreesRegressor ptr) x y = do
-    pyGILStateEnsure
+    state <- pyGILStateEnsure
     xP <- repaToNumpy x
     yP <- repaToNumpy y
     let args = [SomePyArgument xP, SomePyArgument yP]
     callMethod ptr $ PyCallRequest "fit" args HM.empty
-    pyGILStateEnsure
+    pyGILStateRelease state
     return $ ExtraTreesRegressor ptr
 
     

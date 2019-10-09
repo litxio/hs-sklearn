@@ -3,3 +3,5 @@ sklearn.cabal
 *~
 *.pyc
 __pycache__
+
+tags
