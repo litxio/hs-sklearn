@@ -22,7 +22,7 @@ class BaseEstimator a where
 class BaseEstimator a => Regressor a where
   score :: a -> Matrix Double -> Vector Double -> IO Double
   predict :: a -> Matrix Double -> IO (Vector Double)
-  default predict :: Coercible a PyObjectPtr 
+  default predict :: Coercible a PyObject 
                   => a -> Matrix Double -> IO (Vector Double)
   predict regressor mat = withGIL $ do
     resArr <- simpleCallMethod (coerce regressor) "predict" [SomePyArgument mat]
@@ -33,7 +33,7 @@ class BaseEstimator a => Regressor a where
 -- many classes follow the pattern
 class BaseEstimator a => Supervised a where
   fitS :: a -> Matrix Double -> Vector Double -> IO a
-  default fitS :: Coercible a PyObjectPtr 
+  default fitS :: Coercible a PyObject 
                => a -> Matrix Double -> Vector Double -> IO a
   fitS estm x y = withGIL $ do
     simpleCallMethod (coerce estm) "fit" [SomePyArgument x, SomePyArgument y]
@@ -42,7 +42,7 @@ class BaseEstimator a => Supervised a where
 
 class BaseEstimator a => Unsupervised a where
   fitU :: a -> Matrix Double -> IO a
-  default fitU :: Coercible a PyObjectPtr => a -> Matrix Double -> IO a
+  default fitU :: Coercible a PyObject => a -> Matrix Double -> IO a
   fitU estm x = withGIL $ do
     simpleCallMethod (coerce estm) "fit" [SomePyArgument x]
     return estm

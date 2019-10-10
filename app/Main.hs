@@ -21,8 +21,7 @@ main = do
   -- res <- takeMVar mvarOut
   -- print res
 
-  et@(ExtraTreesRegressor etPtr) <-
-    new defaultExtraTreesRegressorParams :: IO (ExtraTreesRegressor)
+  et <- new defaultExtraTreesRegressorParams :: IO (ExtraTreesRegressor)
   let x = fromList (ix2 2 2) [1::Double,2,3,4]
       y = fromList (ix1 2) [5::Double,3]
   fitS et x y

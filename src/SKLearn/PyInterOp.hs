@@ -1,10 +1,11 @@
 {-# LANGUAGE ForeignFunctionInterface, ExtendedDefaultRules, GADTs #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module SKLearn.PyInterOp
-  (module SKLearn.PyInterOp ,PyObject, PyObjectPtr
+  (module SKLearn.PyInterOp ,PyObject
   )where
 
 import Foreign
@@ -19,6 +20,7 @@ import qualified Data.ByteString.Char8 as BSC
 import qualified Debug.Trace as Debug
 import qualified Data.HashMap.Strict as HM
 import System.Environment
+import System.IO.Unsafe
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
 import Control.Monad.Catch
@@ -28,73 +30,70 @@ import Data.String
 import Data.Aeson hiding (Array)
 import Foreign.Marshal.Array
 import Control.Monad
+import qualified Control.Exception (Exception)
 import Data.Foldable
 -- import Control.Monad.Trans.Resource
 import Control.Monad.IO.Class
 import Paths_sklearn
 import qualified Language.C.Inline as C
 
-import SKLearn.PyInterOp.CImports
+import SKLearn.PyInterOp.Python
+import SKLearn.PyInterOp.Numpy
 
-allocate a _ = (0,) <$> a
+data PythonException = PythonException {description :: String
+                                       ,traceback :: String}
+  deriving (Show, Exception)
 
 type Env = ()
 env = ()
-type ResIO = IO
 
 data PyInterpreter = PyInterpreter {stopInterpreter :: IO ()
                                    ,interpreterThread :: Async ()}
 
 class ToPyArgument a where
-  toPyArgument :: a -> ResIO PyObjectPtr
+  toPyArgument :: (MonadIO m, MonadMask m) => a -> m PyObject
 
-instance ToPyArgument PyObjectPtr where
+instance ToPyArgument PyObject where
   toPyArgument = return
 
 instance ToPyArgument String where
   toPyArgument = str
 
 instance ToPyArgument Int64 where
-  toPyArgument = mPtr . pyLongFromLong . CLong
+  toPyArgument = liftIO . pyLongFromLong
 
 instance ToPyArgument Int where
-  toPyArgument = mPtr . pyLongFromLong . CLong . fromIntegral
+  toPyArgument = liftIO . pyLongFromLong . fromIntegral
 
 instance Shape sh => ToPyArgument (Array F sh Double) where
-  toPyArgument = repaToNumpy
+  toPyArgument = liftIO . repaToNumpy
 
 data SomePyArgument = forall a. ToPyArgument a => SomePyArgument a
 
-withGIL :: ResIO a -> ResIO a
-withGIL = bracket pyGILStateEnsure pyGILStateRelease . const
+withGIL :: (MonadIO m, MonadMask m) => m a -> m a
+withGIL = bracket (liftIO pyGILStateEnsure) (liftIO . pyGILStateRelease) . const
 
 
-mPtr :: IO PyObjectPtr -> ResIO PyObjectPtr
-mPtr po = snd <$> allocate po pyDecRef
+str :: String -> (MonadIO m, MonadMask m) => m PyObject
+str s = liftIO $ pyUnicodeDecodeLocale s "strict" >>= excIfNull
 
-str :: String -> ResIO PyObjectPtr
-str s = do
-  cs <- snd <$> allocate (newCString s) free
-  mPtr $ pyUnicodeDecodeFSDefault cs
-
-readStr :: PyObjectPtr -> ResIO String
-readStr = liftIO . (pyUnicodeAsUTF8 >=> peekCString)
+readStr :: (MonadIO m, MonadMask m) => PyObject -> m String
+readStr = liftIO . pyUnicodeAsUTF8
 
 
-importModule :: String -> ResIO PyObjectPtr
-importModule s = liftIO $ withCString s $ \cs ->
-  pyImportImportModule cs >>= excIfNull
+importModule :: (MonadIO m, MonadMask m) => String -> m PyObject
+importModule s = liftIO $ pyImportImportModule s >>= excIfNull
 
 
-getAttr :: PyObjectPtr -> String -> ResIO PyObjectPtr
-getAttr pobj attr = liftIO $ withCString attr $ \cattr ->
-  debug env ("getting attr "++attr) >> pyObjectGetAttrString pobj cattr >>= excIfNull
+getAttr :: (MonadIO m, MonadMask m) => PyObject -> String -> m PyObject
+getAttr pobj attr = liftIO $ pyObjectGetAttrString pobj attr >>= excIfNull
 
 
 -- Return a python object representing an instance of our main interop class
-initialize :: ResIO ()
+initialize :: (MonadIO m, MonadMask m) => m ()
 initialize = do
   liftIO $ pyInitialize
+  disableWarnings
   -- debug env "Importing interop"
   -- pModule <- importModule "interop" >>= excIfNull
   -- pClass <- getAttr pModule "Interop" >>= excIfNull
@@ -111,29 +110,29 @@ data PyCallRequest =
                 , kwargs :: HM.HashMap String [SomePyArgument] }
 
 
-createArgsTuple :: [SomePyArgument] -> ResIO PyObjectPtr
+createArgsTuple :: (MonadIO m, MonadMask m) => [SomePyArgument] -> m PyObject
 createArgsTuple args = do
-  pArgs <- mPtr $ pyTupleNew (fromIntegral $ length args) >>= excIfNull
+  pArgs <- liftIO $ pyTupleNew (fromIntegral $ length args) >>= excIfNull
   for_ (zip args [0..]) $ \(SomePyArgument a, i) -> do
     arg <- toPyArgument a
     liftIO $ pyTupleSetItem pArgs i arg >>= excIfMinus1
   return pArgs
 
 
-oldCallMethod :: PyObjectPtr -> PyCallRequest -> ResIO PyObjectPtr
+oldCallMethod :: (MonadIO m, MonadMask m) => PyObject -> PyCallRequest -> m PyObject
 oldCallMethod obj PyCallRequest{methodName, args, kwargs} = do
   pArgs <- createArgsTuple args
   method <- getAttr obj methodName
-  res <- mPtr $ pyObjectCallObject method pArgs >>= excIfNull
+  res <- liftIO $ pyObjectCallObject method pArgs >>= excIfNull
   liftIO $ pyDecRef pArgs
   return res
 
 
-callMethodJSON :: FromJSON a
-               => PyObjectPtr 
+callMethodJSON ::(MonadIO m, MonadMask m, FromJSON a)
+               => PyObject 
                -> String 
                -> [SomePyArgument] 
-               -> ResIO (Maybe a)
+               -> m (Maybe a)
 callMethodJSON obj methodName args = do
   res <- simpleCallMethod obj methodName args
   jsonRes <- jsonify res
@@ -141,27 +140,29 @@ callMethodJSON obj methodName args = do
     Right json -> return json
     Left e -> throwM $ userError e
 
-simpleCallMethod :: PyObjectPtr 
+simpleCallMethod :: (MonadIO m, MonadMask m) 
+                 => PyObject 
                  -> String 
                  -> [SomePyArgument] 
-                 -> ResIO PyObjectPtr
+                 -> m PyObject
 simpleCallMethod obj methodName args = do
   debug env $ "Creating arguments for "++methodName
   pArgs <- createArgsTuple args
   debug env $ "Getting method object "++methodName
   method <- getAttr obj methodName
   debug env $ "Calling "++methodName
-  res <- mPtr $ pyObjectCallObject method pArgs >>= excIfNull
+  res <- liftIO $ pyObjectCallObject method pArgs >>= excIfNull
   debug env $ "Call returned "++methodName
   liftIO $ pyDecRef pArgs
+  debug env "Exiting from simpleCallMethod"
   return res
 
-jsonify :: PyObjectPtr -> ResIO String
+jsonify :: (MonadIO m, MonadMask m) => PyObject -> m String
 jsonify obj = do
   pModule <- importModule "json"
   dumps <- getAttr pModule "dumps"
   pArgs <- createArgsTuple [SomePyArgument obj]
-  strRes <- mPtr $ pyObjectCallObject dumps pArgs >>= excIfNull
+  strRes <- liftIO $ pyObjectCallObject dumps pArgs >>= excIfNull
   liftIO $ pyDecRef pArgs
   readStr strRes
 
@@ -186,10 +187,63 @@ runInterpreter = do
   thread <- async $ takeMVar stopMVar
   return $ PyInterpreter (putMVar stopMVar ()) thread
 
-excIfNull :: MonadIO m => PyObjectPtr -> m PyObjectPtr
-excIfNull p
-  | p == nullPtr = liftIO $ debug env "Null ptr!!" >> pyErrPrintEx 0 >> return p
-  | otherwise = return p
+
+nullObject :: PyObject -> Bool
+nullObject (PyObject fptr) = unsafePerformIO $
+  withForeignPtr fptr $ \ptr -> return (nullPtr == ptr)
+
+
+excIfNull :: (MonadMask m, MonadIO m) => PyObject -> m PyObject
+excIfNull po = do
+  if nullObject po
+     then do
+       debug env "Null ptr!!"
+       -- liftIO $ pyErrPrintEx 0
+       raisePythonException
+     else return po
+
+
+whenM :: Monad m => m Bool -> m () -> m ()
+whenM condM a = do
+  cond <- condM
+  if cond
+     then a
+     else return ()
+
+
+raisePythonException :: forall m a. (MonadMask m, MonadIO m) => m a
+raisePythonException = do
+  (ptype, pvalue, ptraceback) <- liftIO pyErrFetch
+  when (nullObject ptype || nullObject pvalue) $
+    error "raisePythonException called with no Python exception!"
+  
+  tbModule <- importModule "traceback"
+  exc <- simpleCallMethod tbModule "format_exception_only"
+                          [SomePyArgument ptype, SomePyArgument pvalue]
+  when (nullObject exc) $
+     throwM $ userError $ "A python exception occurred, but there was an "
+                          <> " error retrieving the exception details"
+  excS <- joinPyStringList exc
+
+  tbS <- if nullObject ptraceback
+            then return ""
+            else do
+              debug env "About to format_tb"
+              tbStrList 
+                <- simpleCallMethod tbModule "format_tb" [SomePyArgument ptraceback]
+              liftIO $ pyErrPrintEx 0
+              if (nullObject tbStrList)
+                then return "There was an error retrieving the traceback"
+                else joinPyStringList tbStrList
+  throwM $ PythonException excS tbS
+
+  where
+    joinPyStringList :: PyObject -> m String
+    joinPyStringList po = do
+      nl <- str "\\n"
+      s <- simpleCallMethod nl "join" [SomePyArgument po]
+      readStr s
+
 
 excIfMinus1 :: (MonadIO m, Num i, Eq i) => i -> m i
 excIfMinus1 i
@@ -197,14 +251,13 @@ excIfMinus1 i
   | otherwise = return i
 
 
-newNumpyDoubleArray :: [Int] -> ResIO PyObjectPtr
-newNumpyDoubleArray dims = do
-  dimsP <- snd <$> allocate (newArray $ fromIntegral <$> dims) free :: ResIO (Ptr CLong)
-  liftIO $ castPtr <$> npArraySimpleNew 
-                          (fromIntegral $ length dims) dimsP npDoubleType
+newNumpyDoubleArray :: forall m. (MonadIO m, MonadMask m) => [Int] -> m PyObject
+newNumpyDoubleArray dims = liftIO $ do
+  dimsP <- newArray $ fromIntegral <$> dims :: IO (Ptr CLong)
+  npArraySimpleNew (fromIntegral $ length dims) dimsP npDoubleType
 
 
-pyNew :: String -> String -> Value -> IO PyObjectPtr
+pyNew :: String -> String -> Value -> IO PyObject
 pyNew moduleName className params = do
   debug env $ "pyNew getting module "++ moduleName
   mod <- importModule moduleName
@@ -214,36 +267,47 @@ pyNew moduleName className params = do
   debug env $ "pyNew creating args tuple class "++ className
   pArgs <- createArgsTuple []
   debug env $ "pyNew calling "++ className
-  mPtr $ pyObjectCallObject pClass pArgs >>= excIfNull
+  pyObjectCallObject pClass pArgs >>= excIfNull
 
 
-repaToNumpy :: Shape sh => Array F sh Double -> IO PyObjectPtr
+repaToNumpy :: forall m sh. (MonadMask m, MonadIO m, Shape sh)
+            => Array F sh Double -> m PyObject
 repaToNumpy arr = do
   let dims = listOfShape (extent arr)
-  dimsP <- snd <$> allocate (newArray $ fromIntegral <$> dims) free :: IO (Ptr CLong)
+  dimsP <- liftIO $ newArray $ fromIntegral <$> dims :: m (Ptr CLong)
   debug env "About to create array... hold on!!"
-  withForeignPtr (toForeignPtr arr) $ \p ->
+  liftIO $ withForeignPtr (toForeignPtr arr) $ \p ->
     npArraySimpleNewFromData (fromIntegral $ length dims) dimsP npDoubleType (castPtr p)
         >>= excIfNull
 
 
-numpyToRepa :: Shape sh => PyObjectPtr -> sh -> IO (Array F sh Double)
+numpyToRepa :: Shape sh => PyObject -> sh -> IO (Array F sh Double)
 numpyToRepa npArr shape = do
-  dataPtr <- castPtr <$> (npArrayData npArr >>= excIfNull)
-  -- let cleanup = castFunPtr $ [C.funPtr| void deref(double* ptr) {
-  --                                         Py_DecRef( $(void* npArr)); 
-  --                                       } |]
-  fPtr <- FC.newForeignPtr dataPtr (pyDecRef npArr>>return ())
+  fPtr <- npArrayData npArr
   return $ fromForeignPtr shape fPtr
+
+
 
 
 printDebugInfo :: Env -> IO ()
 printDebugInfo env = do
   debug env $ "Python thread starting"
-  pyVer <- pyGetVersion >>= peekCString
-  pyPath <- pyGetPath >>= peekCWString
+  pyVer <- pyGetVersion
+  pyPath <- pyGetPath
   debug env $ "Python version " ++ pyVer
   debug env $ "Python module path: " ++ pyPath
 
+
 debug env = liftIO . Debug.traceIO
 
+disableWarnings :: (MonadMask m, MonadIO m) => m ()
+disableWarnings = do
+  interop <- importModule "interop"
+  simpleCallMethod interop "disable_warnings" []
+  return ()
+  return ()
+
+
+runSimpleString :: String -> IO Int
+runSimpleString s = fmap fromIntegral $ withCString s $ \cs -> 
+  [C.exp| int {PyRun_SimpleString($(char* cs))} |]

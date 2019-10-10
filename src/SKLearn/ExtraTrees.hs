@@ -9,8 +9,8 @@ import Data.Aeson
 import SKLearn.Classes
 import SKLearn.PyInterOp
 
-newtype ExtraTreesRegressor = ExtraTreesRegressor {_pyObj :: PyObjectPtr}
-  deriving (Show, Generic)
+newtype ExtraTreesRegressor = ExtraTreesRegressor {_pyObj :: PyObject}
+  deriving (Generic)
 
 data SplitCriterion = MSE | MAE deriving (Eq, Show, Enum, Generic, ToJSON)
 

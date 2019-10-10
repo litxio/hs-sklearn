@@ -10,9 +10,8 @@ import SKLearn.Classes
 import SKLearn.PyInterOp
 
 
-newtype UserDefinedRegressor 
-  = UserDefinedRegressor { _pyObj :: PyObjectPtr}
-  deriving (Show, Generic)
+newtype UserDefinedRegressor = UserDefinedRegressor { _pyObj :: PyObject}
+  deriving (Generic)
 
 
 instance BaseEstimator UserDefinedRegressor where

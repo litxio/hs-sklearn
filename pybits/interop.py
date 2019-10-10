@@ -1,14 +1,13 @@
 
 import json
-from sklearn.linear_model import LinearRegression
 
+def disable_warnings():
+    import sys
 
-class Interop:
+    if not sys.warnoptions:
+        import warnings
+        warnings.simplefilter("ignore")
 
-    def test(self):
-        return {'hello': 1}
-
-    def train_lr(self, X, y):
-        lr = LinearRegression()
-        lr.fit(X, y)
-        print(lr.coef_)
+def printpath():
+    import sys
+    return (str(sys.path))
