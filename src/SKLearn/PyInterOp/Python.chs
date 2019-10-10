@@ -10,9 +10,6 @@ import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
 
-import SKLearn.PyInterOp.Utils
-
-
 {#pointer *PyObject as PyObject foreign finalizer Py_DecRef as py_decref newtype#}
 
 peekCWStringCast = peekCWString . castPtr

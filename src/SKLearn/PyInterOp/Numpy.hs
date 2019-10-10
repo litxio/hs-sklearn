@@ -33,11 +33,13 @@ import Paths_sklearn
 import qualified Language.C.Inline as C
 
 import SKLearn.PyInterOp.Python
+import SKLearn.PyInterOp.Utils
+import SKLearn.PyInterOp.TH
 
 -- This gets rid of an annoying warning
 C.verbatim "#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION"
 
-C.include "/home/richard/.local/lib/python3.7/site-packages/numpy/core/include/numpy/arrayobject.h"
+C.include $ $(numpyIncludeDir) ++ "/numpy/arrayobject.h"
 
 npDoubleType = [C.pure| int{NPY_DOUBLE} |]
 
