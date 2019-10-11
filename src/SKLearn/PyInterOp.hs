@@ -48,8 +48,9 @@ data PythonException = PythonException {description :: String
 type Env = ()
 env = ()
 
-data PythonCommand = forall a. PythonCommand {action :: IO a
-                                             ,outbox :: MVar a}
+data PythonCommand = forall a. PythonCommand 
+                                {action :: IO a
+                                ,outbox :: MVar (Either PythonException a)}
 
 data PyInterpreter = PyInterpreter {stopInterpreter :: IO ()
                                    ,commandMVar :: MVar PythonCommand
@@ -191,7 +192,7 @@ runInterpreter = runInBoundThread $ do
   debug env "Initialized"
   thread <- asyncBound $ forever $ do
     PythonCommand{action, outbox} <- takeMVar commandMVar
-    action >>= putMVar outbox
+    try action >>= putMVar outbox
 
   let interp = PyInterpreter (putMVar stopMVar ()) commandMVar thread
   runPython interp (initialize >> initNumpy)
@@ -203,7 +204,9 @@ runPython PyInterpreter{ commandMVar } action = do
   outbox <- newEmptyMVar
   let command = PythonCommand{action, outbox}
   putMVar commandMVar command
-  takeMVar outbox
+  takeMVar outbox >>= \case
+    Left e -> throwM e
+    Right a -> return a
 
 
 nullObject :: PyObject -> Bool
