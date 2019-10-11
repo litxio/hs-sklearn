@@ -17,7 +17,7 @@ import Foreign.Storable
 import Data.Array.Repa hiding ((++))
 import Data.Array.Repa.Repr.ForeignPtr (F, toForeignPtr, fromForeignPtr)
 import qualified Data.ByteString.Char8 as BSC
-import qualified Debug.Trace as Debug
+import Debug.Trace as Debug
 import qualified Data.HashMap.Strict as HM
 import System.Environment
 import System.IO.Unsafe
@@ -48,7 +48,11 @@ data PythonException = PythonException {description :: String
 type Env = ()
 env = ()
 
+data PythonCommand = forall a. PythonCommand {action :: IO a
+                                             ,outbox :: MVar a}
+
 data PyInterpreter = PyInterpreter {stopInterpreter :: IO ()
+                                   ,commandMVar :: MVar PythonCommand
                                    ,interpreterThread :: Async ()}
 
 class ToPyArgument a where
@@ -129,7 +133,6 @@ oldCallMethod obj PyCallRequest{methodName, args, kwargs} = do
   pArgs <- createArgsTuple args
   method <- getAttr obj methodName
   res <- liftIO $ pyObjectCallObject method pArgs >>= excIfNull
-  liftIO $ pyDecRef pArgs
   return res
 
 
@@ -166,13 +169,12 @@ jsonify obj = do
   dumps <- getAttr pModule "dumps"
   pArgs <- createArgsTuple [SomePyArgument obj]
   strRes <- liftIO $ pyObjectCallObject dumps pArgs >>= excIfNull
-  liftIO $ pyDecRef pArgs
   readStr strRes
 
 
 -- | Starts the Python interpreter and hands over control
 runInterpreter :: IO PyInterpreter
-runInterpreter = do
+runInterpreter = runInBoundThread $ do
   ourpp <- getDataFileName "pybits"
   pythonPath0 <- lookupEnv "PYTHONPATH"
   let pythonPath = case pythonPath0 of
@@ -181,14 +183,27 @@ runInterpreter = do
   debug env $ "Setting PYTHONPATH to \""++pythonPath++"\""
   printDebugInfo env
   stopMVar <- newEmptyMVar
+  commandMVar <- newEmptyMVar
   -- runResourceT $ do
-  initialize
   debug env "Initializing numpy"
-  liftIO $ initNumpy
+  
   -- newNumpyDoubleArray [3,3]
   debug env "Initialized"
-  thread <- async $ takeMVar stopMVar
-  return $ PyInterpreter (putMVar stopMVar ()) thread
+  thread <- asyncBound $ forever $ do
+    PythonCommand{action, outbox} <- takeMVar commandMVar
+    action >>= putMVar outbox
+
+  let interp = PyInterpreter (putMVar stopMVar ()) commandMVar thread
+  runPython interp (initialize >> initNumpy)
+  return interp
+
+
+runPython :: PyInterpreter -> IO a -> IO a
+runPython PyInterpreter{ commandMVar } action = do
+  outbox <- newEmptyMVar
+  let command = PythonCommand{action, outbox}
+  putMVar commandMVar command
+  takeMVar outbox
 
 
 nullObject :: PyObject -> Bool
@@ -227,6 +242,7 @@ raisePythonException = do
      throwM $ userError $ "A python exception occurred, but there was an "
                           <> " error retrieving the exception details"
   excS <- joinPyStringList exc
+  debug env $ "Exception was "<>excS
 
   tbS <- if nullObject ptraceback
             then return ""

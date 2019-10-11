@@ -62,12 +62,12 @@ instance BaseEstimator ExtraTreesRegressor where
                        , verbose :: Maybe Int
                        , warmStart :: Maybe Bool }
                        deriving (Eq, Show, Generic, ToJSON)
-  new params = ExtraTreesRegressor <$>
-                withGIL (pyNew "sklearn.ensemble" "ExtraTreesRegressor" (toJSON params))
-
+  new interpreter params = ExtraTreesRegressor <$>
+                runPython interpreter (pyNew "sklearn.ensemble"
+                                             "ExtraTreesRegressor"
+                                             (toJSON params))
 
 instance Regressor ExtraTreesRegressor
 
 instance Supervised ExtraTreesRegressor
 
--- I'm a bug

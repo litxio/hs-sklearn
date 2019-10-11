@@ -19,8 +19,8 @@ instance BaseEstimator UserDefinedRegressor where
                                         { pyModule :: String
                                         , pyCallable :: String
                                         , arguments :: Value}
-  new UDRegressorParams{pyModule, pyCallable, arguments} =
-    UserDefinedRegressor <$> pyNew pyModule pyCallable arguments
+  new interpreter UDRegressorParams{pyModule, pyCallable, arguments} =
+    UserDefinedRegressor <$> runPython interpreter (pyNew pyModule pyCallable arguments)
 
 
 instance Regressor UserDefinedRegressor

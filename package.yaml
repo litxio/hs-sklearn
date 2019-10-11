@@ -69,6 +69,7 @@ dependencies:
 - yaml
 - time
 - repa
+- repa-algorithms
 - vector
 - inline-c
 - exceptions
@@ -85,10 +86,10 @@ executables:
   sklearn-exe:
     main:                Main.hs
     source-dirs:         app
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
+    ghc-options: 
+      - -threaded
+      - -rtsopts
+      - -with-rtsopts=-N1
     dependencies:
     - sklearn
 

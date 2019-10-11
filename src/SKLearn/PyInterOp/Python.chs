@@ -11,14 +11,14 @@ import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
 
-{#pointer *PyObject as PyObject foreign finalizer decref_with_gil newtype#}
+{#pointer *PyObject as PyObject foreign finalizer Py_DecRef as py_decref newtype#}
 
 peekCWStringCast = peekCWString . castPtr
 
 peekDouble :: Ptr (Ptr PyObject) -> IO PyObject
 peekDouble pp = do
   p <- peek pp
-  PyObject <$> newForeignPtr decref_with_gil p
+  PyObject <$> newForeignPtr py_decref p
 
 -- {#fun Py_Main as ^ {`Int', `[String]' peek} -> `()' #}
 {#fun Py_Initialize as ^ {} -> `()' #}

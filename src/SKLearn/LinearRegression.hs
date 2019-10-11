@@ -20,8 +20,10 @@ instance BaseEstimator LinearRegression where
                    , normalize :: Maybe Bool
                    , nJobs :: Maybe Int
                    } deriving (Eq, Show, Generic, ToJSON)
-  new params = LinearRegression <$>
-    withGIL (pyNew "sklearn.linear_model" "LinearRegression" (toJSON params))
+  new interpreter params = LinearRegression <$>
+                runPython interpreter (pyNew "sklearn.linear_model"
+                                             "LinearRegression"
+                                             (toJSON params))
 
 instance Regressor LinearRegression
 
