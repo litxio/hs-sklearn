@@ -23,6 +23,7 @@ import System.Environment
 import System.IO.Unsafe
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
+import Control.Concurrent
 import Control.Monad.Catch
 import qualified Data.Vector.Storable as V
 import System.FilePath
@@ -51,7 +52,7 @@ data PyInterpreter = PyInterpreter {stopInterpreter :: IO ()
                                    ,interpreterThread :: Async ()}
 
 class ToPyArgument a where
-  toPyArgument :: (MonadIO m, MonadMask m) => a -> m PyObject
+  toPyArgument ::  a -> IO PyObject
 
 instance ToPyArgument PyObject where
   toPyArgument = return
@@ -70,27 +71,27 @@ instance Shape sh => ToPyArgument (Array F sh Double) where
 
 data SomePyArgument = forall a. ToPyArgument a => SomePyArgument a
 
-withGIL :: (MonadIO m, MonadMask m) => m a -> m a
-withGIL = bracket (liftIO pyGILStateEnsure) (liftIO . pyGILStateRelease) . const
+withGIL ::  IO a -> IO a
+withGIL = runInBoundThread . bracket pyGILStateEnsure pyGILStateRelease . const
 
 
-str :: String -> (MonadIO m, MonadMask m) => m PyObject
+str :: String ->  IO PyObject
 str s = liftIO $ pyUnicodeDecodeLocale s "strict" >>= excIfNull
 
-readStr :: (MonadIO m, MonadMask m) => PyObject -> m String
+readStr ::  PyObject -> IO String
 readStr = liftIO . pyUnicodeAsUTF8
 
 
-importModule :: (MonadIO m, MonadMask m) => String -> m PyObject
+importModule ::  String -> IO PyObject
 importModule s = liftIO $ pyImportImportModule s >>= excIfNull
 
 
-getAttr :: (MonadIO m, MonadMask m) => PyObject -> String -> m PyObject
+getAttr ::  PyObject -> String -> IO PyObject
 getAttr pobj attr = liftIO $ pyObjectGetAttrString pobj attr >>= excIfNull
 
 
 -- Return a python object representing an instance of our main interop class
-initialize :: (MonadIO m, MonadMask m) => m ()
+initialize ::  IO ()
 initialize = do
   liftIO $ pyInitialize
   disableWarnings
@@ -110,16 +111,20 @@ data PyCallRequest =
                 , kwargs :: HM.HashMap String [SomePyArgument] }
 
 
-createArgsTuple :: (MonadIO m, MonadMask m) => [SomePyArgument] -> m PyObject
+createArgsTuple ::  [SomePyArgument] -> IO PyObject
 createArgsTuple args = do
   pArgs <- liftIO $ pyTupleNew (fromIntegral $ length args) >>= excIfNull
   for_ (zip args [0..]) $ \(SomePyArgument a, i) -> do
     arg <- toPyArgument a
+    -- Note that pyTupleSetItem steals our reference, which we don't want.  We
+    -- need to call Py_IncRef to counteract that, because the ForeignPtr 
+    -- finalizer is going to call Py_DecRef for us
+    liftIO $ pyIncRef arg
     liftIO $ pyTupleSetItem pArgs i arg >>= excIfMinus1
   return pArgs
 
 
-oldCallMethod :: (MonadIO m, MonadMask m) => PyObject -> PyCallRequest -> m PyObject
+oldCallMethod ::  PyObject -> PyCallRequest -> IO PyObject
 oldCallMethod obj PyCallRequest{methodName, args, kwargs} = do
   pArgs <- createArgsTuple args
   method <- getAttr obj methodName
@@ -128,11 +133,11 @@ oldCallMethod obj PyCallRequest{methodName, args, kwargs} = do
   return res
 
 
-callMethodJSON ::(MonadIO m, MonadMask m, FromJSON a)
+callMethodJSON :: FromJSON a
                => PyObject 
                -> String 
                -> [SomePyArgument] 
-               -> m (Maybe a)
+               -> IO (Maybe a)
 callMethodJSON obj methodName args = do
   res <- simpleCallMethod obj methodName args
   jsonRes <- jsonify res
@@ -140,11 +145,10 @@ callMethodJSON obj methodName args = do
     Right json -> return json
     Left e -> throwM $ userError e
 
-simpleCallMethod :: (MonadIO m, MonadMask m) 
-                 => PyObject 
+simpleCallMethod :: PyObject 
                  -> String 
                  -> [SomePyArgument] 
-                 -> m PyObject
+                 -> IO PyObject
 simpleCallMethod obj methodName args = do
   debug env $ "Creating arguments for "++methodName
   pArgs <- createArgsTuple args
@@ -153,11 +157,10 @@ simpleCallMethod obj methodName args = do
   debug env $ "Calling "++methodName
   res <- liftIO $ pyObjectCallObject method pArgs >>= excIfNull
   debug env $ "Call returned "++methodName
-  liftIO $ pyDecRef pArgs
   debug env "Exiting from simpleCallMethod"
   return res
 
-jsonify :: (MonadIO m, MonadMask m) => PyObject -> m String
+jsonify ::  PyObject -> IO String
 jsonify obj = do
   pModule <- importModule "json"
   dumps <- getAttr pModule "dumps"
@@ -193,7 +196,7 @@ nullObject (PyObject fptr) = unsafePerformIO $
   withForeignPtr fptr $ \ptr -> return (nullPtr == ptr)
 
 
-excIfNull :: (MonadMask m, MonadIO m) => PyObject -> m PyObject
+excIfNull :: PyObject -> IO PyObject
 excIfNull po = do
   if nullObject po
      then do
@@ -203,7 +206,7 @@ excIfNull po = do
      else return po
 
 
-whenM :: Monad m => m Bool -> m () -> m ()
+whenM :: IO Bool -> IO () -> IO ()
 whenM condM a = do
   cond <- condM
   if cond
@@ -211,7 +214,7 @@ whenM condM a = do
      else return ()
 
 
-raisePythonException :: forall m a. (MonadMask m, MonadIO m) => m a
+raisePythonException :: forall a. IO a
 raisePythonException = do
   (ptype, pvalue, ptraceback) <- liftIO pyErrFetch
   when (nullObject ptype || nullObject pvalue) $
@@ -238,20 +241,20 @@ raisePythonException = do
   throwM $ PythonException excS tbS
 
   where
-    joinPyStringList :: PyObject -> m String
+    joinPyStringList :: PyObject -> IO String
     joinPyStringList po = do
       nl <- str "\\n"
       s <- simpleCallMethod nl "join" [SomePyArgument po]
       readStr s
 
 
-excIfMinus1 :: (MonadIO m, Num i, Eq i) => i -> m i
+excIfMinus1 :: (Eq i, Num i) => i -> IO i
 excIfMinus1 i
   | i == (-1) = liftIO $ pyErrPrintEx 0 >> return i
   | otherwise = return i
 
 
-newNumpyDoubleArray :: forall m. (MonadIO m, MonadMask m) => [Int] -> m PyObject
+newNumpyDoubleArray :: forall m.  [Int] -> IO PyObject
 newNumpyDoubleArray dims = liftIO $ do
   dimsP <- newArray $ fromIntegral <$> dims :: IO (Ptr CLong)
   npArraySimpleNew (fromIntegral $ length dims) dimsP npDoubleType
@@ -270,11 +273,11 @@ pyNew moduleName className params = do
   pyObjectCallObject pClass pArgs >>= excIfNull
 
 
-repaToNumpy :: forall m sh. (MonadMask m, MonadIO m, Shape sh)
-            => Array F sh Double -> m PyObject
+repaToNumpy :: forall sh. Shape sh
+            => Array F sh Double -> IO PyObject
 repaToNumpy arr = do
   let dims = listOfShape (extent arr)
-  dimsP <- liftIO $ newArray $ fromIntegral <$> dims :: m (Ptr CLong)
+  dimsP <- liftIO $ newArray $ fromIntegral <$> dims :: IO (Ptr CLong)
   debug env "About to create array... hold on!!"
   liftIO $ withForeignPtr (toForeignPtr arr) $ \p ->
     npArraySimpleNewFromData (fromIntegral $ length dims) dimsP npDoubleType (castPtr p)
@@ -300,7 +303,7 @@ printDebugInfo env = do
 
 debug env = liftIO . Debug.traceIO
 
-disableWarnings :: (MonadMask m, MonadIO m) => m ()
+disableWarnings :: IO ()
 disableWarnings = do
   interop <- importModule "interop"
   simpleCallMethod interop "disable_warnings" []

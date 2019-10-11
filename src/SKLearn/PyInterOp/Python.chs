@@ -1,5 +1,6 @@
 
 #include <Python.h>
+#include "glue.h"
 
 module SKLearn.PyInterOp.Python where
 
@@ -10,14 +11,14 @@ import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
 
-{#pointer *PyObject as PyObject foreign finalizer Py_DecRef as py_decref newtype#}
+{#pointer *PyObject as PyObject foreign finalizer decref_with_gil newtype#}
 
 peekCWStringCast = peekCWString . castPtr
 
 peekDouble :: Ptr (Ptr PyObject) -> IO PyObject
 peekDouble pp = do
   p <- peek pp
-  PyObject <$> newForeignPtr py_decref p
+  PyObject <$> newForeignPtr decref_with_gil p
 
 -- {#fun Py_Main as ^ {`Int', `[String]' peek} -> `()' #}
 {#fun Py_Initialize as ^ {} -> `()' #}
@@ -35,6 +36,8 @@ peekDouble pp = do
 {#fun PyUnicode_DecodeLocale as ^ {`String', `String'} -> `PyObject' #}
 
 {#fun PyTuple_New as ^ {`Int'} -> `PyObject' #}
+-- NOTE: PyTuple_SetItem steals the reference to the third argument, so we
+-- need to call Py_IncRef if we want to keep using it!
 {#fun PyTuple_SetItem as ^ {`PyObject', `Int', `PyObject'} -> `Int' #}
 
 {#fun PyImport_ImportModule as ^ {`String'} -> `PyObject' #}

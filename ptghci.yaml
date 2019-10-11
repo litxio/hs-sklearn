@@ -1,7 +1,7 @@
 
 ## ghciCommand defaults to "stack ghci" if stack is on PATH, otherwise just "ghci".
 ## "cabal new-repl" is another popular choice.
-ghciCommand: stack ghci --ghci-options "-interactive-print=Text.Pretty.Simple.pPrint +RTS -N2 -RTS -fobject-code -I/usr/include/python3.7m -lpython3.7m" --package pretty-simple
+ghciCommand: PYTHONPATH=pybits LD_PRELOAD=/usr/lib/libpython3.7m.so stack ghci --ghci-options "-interactive-print=Text.Pretty.Simple.pPrint +RTS -N1 -RTS -fobject-code -I/usr/include/python3.7m -lpython3.7m" --package pretty-simple
 
 ## hoogleCommand defaults to "stack hoogle" if stack is on PATH, otherwise just "hoogle".
 #hoogleCommand: stack hoogle
@@ -27,6 +27,6 @@ typeBarTextStyle: ''
 ## By default, no logging
 #logFile: "ptghci_log.txt"
 
-verbosity: Info # One of Trace, Debug, Info, Warn, Error, Critical
+verbosity: Trace # One of Trace, Debug, Info, Warn, Error, Critical
 
 viMode: true

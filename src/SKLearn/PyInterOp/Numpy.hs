@@ -19,6 +19,7 @@ import qualified Data.HashMap.Strict as HM
 import System.Environment
 import Control.Concurrent.Async
 import Control.Concurrent.MVar
+import Control.Concurrent
 import Control.Monad.Catch
 import qualified Data.Vector.Storable as V
 import System.FilePath
@@ -100,11 +101,12 @@ npDoubleType = [C.pure| int{NPY_DOUBLE} |]
 initNumpy :: IO ()
 initNumpy = [C.block| void { import_array(); } |]
 
+
 npArraySimpleNew :: CInt -> Ptr CLong -> CInt -> IO PyObject
 npArraySimpleNew nd dims typenum = do
   arrP :: Ptr PyObject
     <- castPtr <$> [C.exp| void* {PyArray_SimpleNew($(int nd), $(long* dims), $(int typenum))} |]
-  PyObject <$> newForeignPtr py_decref arrP
+  PyObject <$> newForeignPtr decref_with_gil arrP
      
 
 -- | This gives us a weird sort of dependency where we want the original
@@ -116,7 +118,9 @@ npArrayData arr@(PyObject fptr) =
     let ptr' = castPtr ptr
     pyIncRef arr
     dataPtr <- castPtr <$> [C.exp| void* {PyArray_DATA($(void* ptr'))} |]
-    FC.newForeignPtr (dataPtr) (pyDecRef arr)
+    FC.newForeignPtr (dataPtr) (withGIL $ pyDecRef arr)
+  where
+    withGIL = runInBoundThread . bracket pyGILStateEnsure pyGILStateRelease . const
 
 npArraySimpleNewFromData :: CInt -> Ptr CLong -> CInt -> Ptr () -> IO PyObject
 npArraySimpleNewFromData nd dims typenum dataPtr = do
@@ -125,4 +129,4 @@ npArraySimpleNewFromData nd dims typenum dataPtr = do
                                                             $(long* dims),
                                                             $(int typenum),
                                                             $(void* dataPtr))} |]
-  PyObject <$> newForeignPtr py_decref arrP
+  PyObject <$> newForeignPtr decref_with_gil arrP

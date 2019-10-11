@@ -63,11 +63,11 @@ instance BaseEstimator ExtraTreesRegressor where
                        , warmStart :: Maybe Bool }
                        deriving (Eq, Show, Generic, ToJSON)
   new params = ExtraTreesRegressor <$>
-                pyNew "sklearn.ensemble" "ExtraTreesRegressor" (toJSON params)
+                withGIL (pyNew "sklearn.ensemble" "ExtraTreesRegressor" (toJSON params))
 
 
 instance Regressor ExtraTreesRegressor
 
 instance Supervised ExtraTreesRegressor
 
-
+-- I'm a bug

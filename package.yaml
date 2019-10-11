@@ -6,6 +6,10 @@ author:              "Author name here"
 maintainer:          "example@example.com"
 copyright:           "2019 Author name here"
 
+include-dirs: cbits
+c-sources: cbits/*.c
+install-includes: glue.h
+
 extra-source-files:
 - README.md
 - ChangeLog.md
@@ -69,6 +73,7 @@ dependencies:
 - inline-c
 - exceptions
 - template-haskell
+- random
 
 data-files: pybits/**/*.py
 
