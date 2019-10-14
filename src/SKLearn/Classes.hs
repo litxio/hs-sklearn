@@ -21,6 +21,12 @@ class BaseEstimator a where
 
 class BaseEstimator a => Regressor a where
   score :: PyInterpreter -> a -> Matrix Double -> Vector Double -> IO Double
+  default score :: Coercible a PyObject 
+                => PyInterpreter -> a -> Matrix Double -> Vector Double -> IO Double
+  score interpreter estm x y = runPython interpreter $ do
+    simpleCallMethod (coerce estm) "score" [SomePyArgument x, SomePyArgument y]
+      >>= fromPyDouble
+
   predict :: PyInterpreter -> a -> Matrix Double -> IO (Vector Double)
   default predict :: Coercible a PyObject 
                   => PyInterpreter -> a -> Matrix Double -> IO (Vector Double)

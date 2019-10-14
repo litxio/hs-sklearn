@@ -11,7 +11,7 @@ import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
 
-{#pointer *PyObject as PyObject foreign finalizer Py_DecRef as py_decref newtype#}
+{#pointer *PyObject as PyObject foreign finalizer decref_check_count as py_decref newtype#}
 
 peekCWStringCast = peekCWString . castPtr
 
@@ -47,8 +47,11 @@ peekDouble pp = do
 
 {#fun PyLong_FromLong as ^ {`Int64'} -> `PyObject' #}
 
+{#fun PyFloat_AsDouble as ^ {`PyObject'} -> `Double' #}
+
 {#fun PyErr_PrintEx as ^ {`Int'} -> `()' #}
 {#fun PyErr_Fetch as ^ {alloca- `PyObject' peekDouble*,
                         alloca- `PyObject' peekDouble*, 
                         alloca- `PyObject' peekDouble*} -> `()' #}
 
+{#fun PyErr_Occurred as ^ {} -> `PyObject' #}

@@ -17,6 +17,7 @@ import Foreign.Storable
 import Data.Array.Repa hiding ((++))
 import Data.Array.Repa.Repr.ForeignPtr (F, toForeignPtr, fromForeignPtr)
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy.Char8 as BSLC
 import Debug.Trace as Debug
 import qualified Data.HashMap.Strict as HM
 import System.Environment
@@ -28,7 +29,7 @@ import Control.Monad.Catch
 import qualified Data.Vector.Storable as V
 import System.FilePath
 import Data.String
-import Data.Aeson hiding (Array)
+import qualified Data.Aeson as A
 import Foreign.Marshal.Array
 import Control.Monad
 import qualified Control.Exception (Exception)
@@ -43,6 +44,7 @@ import SKLearn.PyInterOp.Numpy
 
 data PythonException = PythonException {description :: String
                                        ,traceback :: String}
+                       | Unsupported {description :: String}
   deriving (Show, Exception)
 
 type Env = ()
@@ -110,10 +112,8 @@ initialize = do
   -- putMVar done ()
 
 
-data PyCallRequest = 
-  PyCallRequest { methodName :: String
-                , args :: [SomePyArgument]
-                , kwargs :: HM.HashMap String [SomePyArgument] }
+touchPyObject :: PyObject -> IO ()
+touchPyObject (PyObject fp) = touchForeignPtr fp
 
 
 createArgsTuple ::  [SomePyArgument] -> IO PyObject
@@ -129,15 +129,8 @@ createArgsTuple args = do
   return pArgs
 
 
-oldCallMethod ::  PyObject -> PyCallRequest -> IO PyObject
-oldCallMethod obj PyCallRequest{methodName, args, kwargs} = do
-  pArgs <- createArgsTuple args
-  method <- getAttr obj methodName
-  res <- liftIO $ pyObjectCallObject method pArgs >>= excIfNull
-  return res
 
-
-callMethodJSON :: FromJSON a
+callMethodJSON :: A.FromJSON a
                => PyObject 
                -> String 
                -> [SomePyArgument] 
@@ -145,7 +138,7 @@ callMethodJSON :: FromJSON a
 callMethodJSON obj methodName args = do
   res <- simpleCallMethod obj methodName args
   jsonRes <- jsonify res
-  case eitherDecodeStrict' (BSC.pack jsonRes) of
+  case A.eitherDecodeStrict' (BSC.pack jsonRes) of
     Right json -> return json
     Left e -> throwM $ userError e
 
@@ -160,6 +153,7 @@ simpleCallMethod obj methodName args = do
   method <- getAttr obj methodName
   debug env $ "Calling "++methodName
   res <- liftIO $ pyObjectCallObject method pArgs >>= excIfNull
+  touchPyObject pArgs
   debug env $ "Call returned "++methodName
   debug env "Exiting from simpleCallMethod"
   return res
@@ -170,6 +164,7 @@ jsonify obj = do
   dumps <- getAttr pModule "dumps"
   pArgs <- createArgsTuple [SomePyArgument obj]
   strRes <- liftIO $ pyObjectCallObject dumps pArgs >>= excIfNull
+  touchPyObject pArgs
   readStr strRes
 
 
@@ -283,17 +278,40 @@ newNumpyDoubleArray dims = liftIO $ do
   npArraySimpleNew (fromIntegral $ length dims) dimsP npDoubleType
 
 
-pyNew :: String -> String -> Value -> IO PyObject
+fromPyDouble :: PyObject -> IO Double
+fromPyDouble obj = do
+  dbl <- pyFloatAsDouble obj
+  err <- pyErrOccurred
+  when (not $ nullObject err) raisePythonException
+  return dbl
+
+
+pyNew :: String -> String -> A.Value -> IO PyObject
 pyNew moduleName className params = do
   debug env $ "pyNew getting module "++ moduleName
   mod <- importModule moduleName
   debug env $ "pyNew getting class "++ className
   pClass <- getAttr mod className
-  -- TODO handle args
+
   debug env $ "pyNew creating args tuple class "++ className
-  pArgs <- createArgsTuple []
+  pArgs <- jsonToPyArgs params
   debug env $ "pyNew calling "++ className
-  pyObjectCallObject pClass pArgs >>= excIfNull
+  res <- pyObjectCallObject pClass pArgs >>= excIfNull
+  touchPyObject pArgs
+  return res
+
+
+jsonToPyArgs ::  A.Value -> IO PyObject
+jsonToPyArgs obj = do
+  mJson <- importModule "json"
+  mBuiltin <- importModule "builtins"
+  case obj of
+     A.Array _ -> do
+       pyArgL <- simpleCallMethod mJson "loads"
+                    [SomePyArgument $ BSLC.unpack $ A.encode obj]
+       simpleCallMethod mBuiltin "tuple" [SomePyArgument pyArgL]
+     other -> throwM $ Unsupported $ "Only JSON arrays are currently"
+                                     ++" supported as method arguments"
 
 
 repaToNumpy :: forall sh. Shape sh
@@ -313,8 +331,6 @@ numpyToRepa npArr shape = do
   return $ fromForeignPtr shape fPtr
 
 
-
-
 printDebugInfo :: Env -> IO ()
 printDebugInfo env = do
   debug env $ "Python thread starting"
@@ -325,7 +341,7 @@ printDebugInfo env = do
 
 
 debug :: () -> String -> IO ()
-debug env s = return () -- liftIO . Debug.traceIO
+debug env s =  liftIO $ Debug.traceIO s
 
 disableWarnings :: IO ()
 disableWarnings = do

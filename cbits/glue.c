@@ -13,3 +13,17 @@ void decref_with_gil(PyObject* obj) {
   if(!_Py_IsFinalizing())
     PyGILState_Release(gstate);
 }
+
+
+void decref_check_count(PyObject* obj) {
+  // int refcnt;
+  // int have_gil;
+  // PyGILState_STATE gstate;
+  // refcnt = obj -> ob_refcnt;
+  // have_gil = PyGILState_Check();
+  // gstate = PyGILState_Ensure();
+  // fprintf(stderr, "decref with %d current references; have gil is %d\n", refcnt, have_gil);
+  // Py_DECREF(obj);
+  // if(!_Py_IsFinalizing())
+  //   PyGILState_Release(gstate);
+}

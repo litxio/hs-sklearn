@@ -2,5 +2,6 @@
 #define HS_SKLEARN_GLUE_H
 
 void decref_with_gil(PyObject* obj);
+void decref_check_count(PyObject* obj);
 
 #endif  /* HS_SKLEARN_GLUE_H */

@@ -81,6 +81,8 @@ data-files: pybits/**/*.py
 library:
   source-dirs: src
   pkg-config-dependencies: python3
+  ghc-options: 
+    - -g
 
 executables:
   sklearn-exe:
@@ -90,6 +92,7 @@ executables:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N1
+      - -g
     dependencies:
     - sklearn
 
