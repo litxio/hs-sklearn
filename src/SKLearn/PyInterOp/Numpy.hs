@@ -65,7 +65,7 @@ npArrayData arr@(PyObject fptr) =
     let ptr' = castPtr ptr
     pyIncRef arr
     dataPtr <- castPtr <$> [C.exp| void* {PyArray_DATA($(void* ptr'))} |]
-    FC.newForeignPtr (dataPtr) (traceIO "decref'ing np array" >> (pyDecRef arr))
+    FC.newForeignPtr (dataPtr) (pyDecRef arr)
 
 
 npArraySimpleNewFromData :: CInt -> Ptr CLong -> CInt -> Ptr () -> IO PyObject

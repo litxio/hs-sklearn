@@ -182,6 +182,7 @@ runInterpreter = runInBoundThread $ do
                      Nothing -> ourpp
                      Just s -> s ++ (searchPathSeparator:ourpp)
   debug env $ "Setting PYTHONPATH to \""++pythonPath++"\""
+  setEnv "PYTHONPATH" pythonPath
   printDebugInfo env
   stopMVar <- newEmptyMVar
   commandMVar <- newEmptyMVar
@@ -192,7 +193,10 @@ runInterpreter = runInBoundThread $ do
   debug env "Initialized"
   thread <- asyncBound $ forever $ do
     PythonCommand{action, outbox} <- takeMVar commandMVar
-    try action >>= putMVar outbox
+    catch (try action >>= putMVar outbox)
+          (\(e::SomeException) ->
+            let msg = "Unexpected exception in Python thread: "++show e
+             in traceIO msg >> error msg)
 
   let interp = PyInterpreter (putMVar stopMVar ()) commandMVar thread
   runPython interp (initialize >> initNumpy)
@@ -205,7 +209,7 @@ runPython PyInterpreter{ commandMVar } action = do
   let command = PythonCommand{action, outbox}
   putMVar commandMVar command
   takeMVar outbox >>= \case
-    Left e -> throwM e
+    Left e -> debug env (show e) >> throwM e
     Right a -> return a
 
 
@@ -320,7 +324,8 @@ printDebugInfo env = do
   debug env $ "Python module path: " ++ pyPath
 
 
-debug env = liftIO . Debug.traceIO
+debug :: () -> String -> IO ()
+debug env s = return () -- liftIO . Debug.traceIO
 
 disableWarnings :: IO ()
 disableWarnings = do
