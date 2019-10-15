@@ -50,6 +50,10 @@ data PythonException = PythonException {description :: String
 type Env = ()
 env = ()
 
+
+debug :: () -> String -> IO ()
+debug env s = return () -- liftIO $ Debug.traceIO s
+
 data PythonCommand = forall a. PythonCommand 
                                 {action :: IO a
                                 ,outbox :: MVar (Either PythonException a)}
@@ -352,9 +356,6 @@ printDebugInfo env = do
   debug env $ "Python version " ++ pyVer
   debug env $ "Python module path: " ++ pyPath
 
-
-debug :: () -> String -> IO ()
-debug env s =  liftIO $ Debug.traceIO s
 
 disableWarnings :: IO ()
 disableWarnings = do

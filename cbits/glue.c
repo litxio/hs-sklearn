@@ -30,14 +30,14 @@ void queue_decref(PyObject* obj) {
     globalDecRefQueue = g_async_queue_new();
   }
   if(obj == 0) {
-    fprintf(stderr, "queue_decref called on null object!?\n");
+  //  fprintf(stderr, "queue_decref called on null object!?\n");
     return;
-  } else
-    fprintf(stderr, "queue_decref called on non-null object, whew\n");
+  }// else
+    //fprintf(stderr, "queue_decref called on non-null object, whew\n");
 
   g_async_queue_push(globalDecRefQueue, obj);
   queue_len = g_async_queue_length (globalDecRefQueue);
-  fprintf(stderr, "New queue len %d\n", queue_len);
+  // fprintf(stderr, "New queue len %d\n", queue_len);
 }
 
 void decref_check_count(PyObject* obj) {
