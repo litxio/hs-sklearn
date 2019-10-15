@@ -1,5 +1,6 @@
 
 #include <Python.h>
+#include <glib.h>
 #include "glue.h"
 
 module SKLearn.PyInterOp.Python where
@@ -11,7 +12,8 @@ import Foreign.Storable
 import Foreign.Marshal.Alloc
 import Foreign.C.String
 
-{#pointer *PyObject as PyObject foreign finalizer decref_check_count as py_decref newtype#}
+{#pointer *PyObject as PyObject foreign finalizer queue_decref as py_decref newtype#}
+{#pointer *GAsyncQueue as GAsyncQueue#}
 
 peekCWStringCast = peekCWString . castPtr
 
@@ -26,6 +28,7 @@ peekDouble pp = do
 {#fun Py_GetVersion as ^ {} -> `String' #}
 {#fun Py_GetPath as ^ {} -> `String' peekCWStringCast* #}
 {#fun Py_DecRef as ^ {`PyObject'} -> `()' #}
+{#fun Py_DecRef as pyDecRefRawPtr {id `Ptr PyObject' id-} -> `()' #}
 {#fun Py_IncRef as ^ {`PyObject'} -> `()' #}
 
 {#fun PyGILState_Ensure as ^ {} -> `Int' #}
@@ -55,3 +58,16 @@ peekDouble pp = do
                         alloca- `PyObject' peekDouble*} -> `()' #}
 
 {#fun PyErr_Occurred as ^ {} -> `PyObject' #}
+
+-- A couple of helper functions from glib
+{#fun g_async_queue_new as ^ {} -> `GAsyncQueue' #}
+{#fun g_async_queue_push as ^ {`GAsyncQueue', `Ptr ()'} -> `()' #}
+{#fun g_async_queue_pop as ^ {`GAsyncQueue'} -> `Ptr ()' #}
+{#fun g_async_queue_timeout_pop as ^ {`GAsyncQueue', `Int64'} -> `Ptr ()' #}
+{#fun g_async_queue_length as ^ {`GAsyncQueue'} -> `Int' #}
+
+{#fun queue_decref as ^ {`PyObject'} -> `()' #}
+{#fun get_decref_queue as ^ {} -> `GAsyncQueue' #}
+
+
+-- foreign import ccall "&globalDecRefQueue" globalDecRefQueue :: GAsyncQueue

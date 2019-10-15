@@ -129,7 +129,6 @@ createArgsTuple args = do
   return pArgs
 
 
-
 callMethodJSON :: A.FromJSON a
                => PyObject 
                -> String 
@@ -181,10 +180,8 @@ runInterpreter = runInBoundThread $ do
   printDebugInfo env
   stopMVar <- newEmptyMVar
   commandMVar <- newEmptyMVar
-  -- runResourceT $ do
   debug env "Initializing numpy"
   
-  -- newNumpyDoubleArray [3,3]
   debug env "Initialized"
   thread <- asyncBound $ forever $ do
     PythonCommand{action, outbox} <- takeMVar commandMVar
@@ -195,7 +192,23 @@ runInterpreter = runInBoundThread $ do
 
   let interp = PyInterpreter (putMVar stopMVar ()) commandMVar thread
   runPython interp (initialize >> initNumpy)
+  async $ watchForDecrefs commandMVar
   return interp
+  where
+    watchForDecrefs commandMVar = do
+      outbox <- newEmptyMVar
+      decrefQueue <- getDecrefQueue
+      forever $ do
+        debug env "Going to block and pop a a decref request"
+        pyObjPtr :: Ptr PyObject <- castPtr <$> gAsyncQueueTimeoutPop decrefQueue 1000000
+        if pyObjPtr == nullPtr
+           then do
+             queueLen <- gAsyncQueueLength decrefQueue
+             debug env $ "Timed out; queue length is "++show queueLen
+           else do
+             debug env "Got decref on queue, about to call Py_DecRef"
+             putMVar commandMVar $ PythonCommand (pyDecRefRawPtr pyObjPtr) outbox
+             takeMVar outbox >> return ()
 
 
 runPython :: PyInterpreter -> IO a -> IO a

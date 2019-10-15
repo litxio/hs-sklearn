@@ -80,7 +80,7 @@ data-files: pybits/**/*.py
 
 library:
   source-dirs: src
-  pkg-config-dependencies: python3
+  pkg-config-dependencies: python3, glib-2.0
   ghc-options: 
     - -g
 
