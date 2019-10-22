@@ -19,11 +19,15 @@ instance BaseEstimator LinearRegression where
           LinearRP { fitIntercept :: Maybe Bool
                    , normalize :: Maybe Bool
                    , nJobs :: Maybe Int
-                   } deriving (Eq, Show, Generic, ToJSON)
+                   } deriving (Eq, Show, Generic)
   new interpreter params = LinearRegression <$>
                 runPython interpreter (pyNew "sklearn.linear_model"
                                              "LinearRegression"
                                              (toJSON params))
+
+instance ToJSON (Params LinearRegression) where
+  toJSON = genericToJSON defaultOptions {fieldLabelModifier=camelTo2 '_'
+                                        ,omitNothingFields=True}
 
 instance Regressor LinearRegression
 

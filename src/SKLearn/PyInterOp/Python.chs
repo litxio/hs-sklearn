@@ -46,6 +46,7 @@ peekDouble pp = do
 {#fun PyImport_ImportModule as ^ {`String'} -> `PyObject' #}
 
 {#fun PyObject_CallObject as ^ {`PyObject', `PyObject'} -> `PyObject' #}
+{#fun PyObject_Call as ^ {`PyObject', `PyObject', `PyObject'} -> `PyObject' #}
 {#fun PyObject_GetAttrString as ^ {`PyObject', `String'} -> `PyObject' #}
 
 {#fun PyLong_FromLong as ^ {`Int64'} -> `PyObject' #}

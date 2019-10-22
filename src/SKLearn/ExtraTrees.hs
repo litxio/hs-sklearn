@@ -61,11 +61,15 @@ instance BaseEstimator ExtraTreesRegressor where
                        , randomState :: Maybe Int
                        , verbose :: Maybe Int
                        , warmStart :: Maybe Bool }
-                       deriving (Eq, Show, Generic, ToJSON)
+                       deriving (Eq, Show, Generic)
   new interpreter params = ExtraTreesRegressor <$>
                 runPython interpreter (pyNew "sklearn.ensemble"
                                              "ExtraTreesRegressor"
                                              (toJSON params))
+
+instance ToJSON (Params ExtraTreesRegressor) where
+  toJSON = genericToJSON defaultOptions {fieldLabelModifier=camelTo2 '_'
+                                        ,omitNothingFields=True}
 
 instance Regressor ExtraTreesRegressor
 

@@ -53,7 +53,6 @@ build-tools:
 
 dependencies:
 - base >= 4.7 && < 5
-- resourcet
 - text
 - containers
 - unordered-containers
@@ -75,6 +74,7 @@ dependencies:
 - exceptions
 - template-haskell
 - random
+- mtl
 
 data-files: pybits/**/*.py
 

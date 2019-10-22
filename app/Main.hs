@@ -20,6 +20,7 @@ import SKLearn.LinearRegression
 
 main :: IO ()
 main = do
+  traceIO "Creating interpreter..."
   itp <- runInterpreter
   -- res <- takeMVar mvarOut
   -- print res
@@ -30,9 +31,9 @@ main = do
   fitS itp et x y
 
   traceIO "to numpy..."
-  npX <- repaToNumpy x
+  npX <- runPython itp $ repaToNumpy x
   traceIO "to repa..."
-  r' <- numpyToRepa npX (Z :. (2::Int) :. (2::Int))
+  r' <- runPython itp $ numpyToRepa npX (Z :. (2::Int) :. (2::Int))
   print $ toList r'
 
 
