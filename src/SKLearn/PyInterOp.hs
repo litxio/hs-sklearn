@@ -51,6 +51,7 @@ newtype Py a = Py { unPy :: StateT Bool IO a }
 
 data PythonException = PythonException {description :: String
                                        ,traceback :: String}
+                       | LogicError {description :: String}
                        | Unsupported {description :: String}
   deriving Show
 instance Exception PythonException
@@ -90,8 +91,8 @@ instance Repa.Shape sh
   => ToPyArgument (Repa.Array Repa.F sh Double) where
   toPyArgument = repaToNumpy
 
-instance Massiv.Index ix
-  => ToPyArgument (Massiv.Array Massiv.S ix Double) where
+instance (Massiv.Manifest r ix Double)
+  => ToPyArgument (Massiv.Array r ix Double) where
   toPyArgument = massivToNumpy
 
 data SomePyArgument = forall a. ToPyArgument a => SomePyArgument a
@@ -381,7 +382,7 @@ jsonToPyArgs obj = do
 repaToNumpy :: forall sh. Repa.Shape sh
             => Repa.Array Repa.F sh Double -> Py PyObject
 repaToNumpy arr = do
-  let dims = Repa.listOfShape (Repa.extent arr)
+  let dims = reverse $ Repa.listOfShape (Repa.extent arr)
   dimsP <- liftIO $ newArray $ fromIntegral <$> dims :: Py (Ptr CLong)
   debug env "About to create array... hold on!!"
   liftIO (withForeignPtr (Repa.toForeignPtr arr) $ \p ->

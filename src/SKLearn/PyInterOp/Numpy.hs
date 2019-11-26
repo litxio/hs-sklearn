@@ -76,3 +76,15 @@ npArraySimpleNewFromData nd dims typenum dataPtr = do
                                                             $(int typenum),
                                                             $(void* dataPtr))} |]
   PyObject <$> newForeignPtr py_decref arrP
+
+npArrayDim :: CInt -> PyObject -> IO CInt
+npArrayDim dim arr@(PyObject fptr) = do
+  withForeignPtr fptr $ \ptr -> do
+    let ptr' = castPtr ptr
+    [C.exp| int {PyArray_DIM($(void* ptr'), $(int dim))} |]
+
+npArrayNDim :: PyObject -> IO CInt
+npArrayNDim arr@(PyObject fptr) = do
+  withForeignPtr fptr $ \ptr -> do
+    let ptr' = castPtr ptr
+    [C.exp| int {PyArray_NDIM($(void* ptr'))} |]
