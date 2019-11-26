@@ -13,8 +13,11 @@ import Foreign.C.Types
 import Foreign.C.String
 import Foreign.Ptr
 import Foreign.Storable
-import Data.Array.Repa hiding ((++))
-import Data.Array.Repa.Repr.ForeignPtr (F, toForeignPtr, fromForeignPtr)
+import qualified Data.Array.Repa as Repa
+import qualified Data.Array.Repa.Repr.ForeignPtr as Repa
+import qualified Data.Massiv.Array as Massiv
+import qualified Data.Massiv.Array.Manifest.Vector as Massiv
+import qualified Data.Massiv.Array.Unsafe as Massiv
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy.Char8 as BSLC
 import Debug.Trace as Debug
@@ -83,8 +86,13 @@ instance ToPyArgument Int64 where
 instance ToPyArgument Int where
   toPyArgument = liftIO . pyLongFromLong . fromIntegral
 
-instance Shape sh => ToPyArgument (Array F sh Double) where
+instance Repa.Shape sh 
+  => ToPyArgument (Repa.Array Repa.F sh Double) where
   toPyArgument = repaToNumpy
+
+instance Massiv.Index ix
+  => ToPyArgument (Massiv.Array Massiv.S ix Double) where
+  toPyArgument = massivToNumpy
 
 data SomePyArgument = forall a. ToPyArgument a => SomePyArgument a
 
@@ -370,22 +378,51 @@ jsonToPyArgs obj = do
                                      ++" supported as method arguments"
 
 
-repaToNumpy :: forall sh. Shape sh
-            => Array F sh Double -> Py PyObject
+repaToNumpy :: forall sh. Repa.Shape sh
+            => Repa.Array Repa.F sh Double -> Py PyObject
 repaToNumpy arr = do
-  let dims = listOfShape (extent arr)
+  let dims = Repa.listOfShape (Repa.extent arr)
   dimsP <- liftIO $ newArray $ fromIntegral <$> dims :: Py (Ptr CLong)
   debug env "About to create array... hold on!!"
-  liftIO (withForeignPtr (toForeignPtr arr) $ \p ->
-    npArraySimpleNewFromData (fromIntegral $ length dims) dimsP npDoubleType (castPtr p))
+  liftIO (withForeignPtr (Repa.toForeignPtr arr) $ \p ->
+    npArraySimpleNewFromData (fromIntegral $ length dims)
+                             dimsP
+                             npDoubleType
+                             (castPtr p))
         >>= excIfNull
 
 
-numpyToRepa :: Shape sh => PyObject -> sh -> Py (Array F sh Double)
+numpyToRepa :: Repa.Shape sh 
+            => PyObject -> sh -> Py (Repa.Array Repa.F sh Double)
 numpyToRepa npArr shape = do
   fPtr <- liftIO $ npArrayData npArr
-  return $ fromForeignPtr shape fPtr
+  return $ Repa.fromForeignPtr shape fPtr
 
+
+massivToNumpy :: Massiv.Manifest r ix Double 
+              => Massiv.Array r ix Double -> Py PyObject
+massivToNumpy arr = do
+  let dims = reverse $ Massiv.foldlIndex (flip (:)) [] $
+                          Massiv.unSz $ Massiv.size arr
+      vec = Massiv.toVector arr :: V.Vector Double
+  dimsP <- liftIO $ newArray $ fromIntegral <$> dims :: Py (Ptr CLong)
+  debug env "About to create array... hold on!!"
+  (liftIO $
+    V.unsafeWith vec $ \p -> 
+      npArraySimpleNewFromData (fromIntegral $ length dims)
+                               dimsP
+                               npDoubleType
+                               (castPtr p))
+        >>= excIfNull
+
+
+numpyToMassiv :: Massiv.Index ix 
+              => PyObject -> Massiv.Sz ix -> Py (Massiv.Array Massiv.S ix Double)
+numpyToMassiv npArr sz@(Massiv.Sz shIx) = do
+  fPtr <- liftIO $ npArrayData npArr
+  let flatSz = Massiv.Sz1 $ Massiv.foldlIndex (*) 1 shIx
+  return $ Massiv.resize' sz $
+    Massiv.unsafeArrayFromForeignPtr0 Massiv.Seq fPtr flatSz 
 
 printDebugInfo :: Env -> IO ()
 printDebugInfo env = do
